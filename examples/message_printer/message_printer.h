@@ -1,5 +1,4 @@
-#ifndef MESSAGE_PRINTER_H_U3Q5YMCD
-#define MESSAGE_PRINTER_H_U3Q5YMCD
+#pragma once
 
 #include <mfast.h>
 #include <iostream>
@@ -50,90 +49,86 @@ class message_printer
 
   public:
 
-    enum {
-      visit_absent = 0
-    };
-
-
     message_printer(std::ostream& os)
       : os_(os)
     {
     }
 
     template <typename IntType>
-    void visit_i(const int_cref<IntType>& ref)
+    void visit(const int_cref<IntType>& ref)
     {
       // matches int32_cref, uint32_cref, int64_cref, uint64_cref
       os_ << ref.value();
     }
 
-    void visit_i(const enum_cref& ref)
+    void visit(const enum_cref& ref)
     {
       os_ << ref.value_name();
     }
 
-    void visit_i(const decimal_cref& ref)
+    void visit(const decimal_cref& ref)
     {
       os_ << ref.mantissa() << "*10^" << (int)ref.exponent();
     }
 
     template <typename CharType>
-    void visit_i(const string_cref<CharType>& ref)
+    void visit(const string_cref<CharType>& ref)
     {
       // matches ascii_string_cref and unicode_string_cref
       os_ << ref.c_str();
     }
 
-    void visit_i(const byte_vector_cref& ref)
+    void visit(const byte_vector_cref& ref)
     {
       boost::io::ios_flags_saver  ifs( os_ );
       os_ << std::hex << std::setfill('0');
 
-      for (std::size_t i = 0 ; i < ref.size(); ++i){
-        os_ << std::setw(2) <<  static_cast<unsigned>(ref[i]);
+      for (auto elem : ref){
+        os_ << std::setw(2) <<  static_cast<unsigned>(elem);
       }
       os_ << std::setfill(' ');
 
     }
 
     template <typename IntType>
-    void visit_i(const int_vector_cref<IntType>& ref)
+    void visit(const int_vector_cref<IntType>& ref)
     {
       // matches int32_vector_cref, uint32_vector_cref, int64_vector_cref, uint64_vector_cref
 
       char sep[2]= { '\x0', '\x0'};
       os_ << "{";
-      for (std::size_t i = 0; i < ref.size(); ++i)
-      {
-        os_ << sep << ref[i];
+      for (auto elem : ref){
+        os_ << sep << elem;
         sep[0] = ',';
       }
       os_ << "}";
     }
 
-    template <typename T>
-    void visit(const T& ref)
+    void visit(const aggregate_cref& ref, int)
     {
-      os_ << indent_ << ref.name() << ": ";
-      this->visit_i(ref);
-      os_ << "\n";
-    }
-
-    template <typename CompositeTypeRef>
-    void visit(const CompositeTypeRef& ref, int)
-    {
-      os_ << indent_ << ref.name() << ":\n";
       ++indent_;
-      ref.accept_accessor(*this);
+      for (auto&& field : ref) {
+        if (field.present()) {
+          os_ << indent_ << field.name() << ": ";
+          apply_accessor(*this, field);
+          os_ << std::endl;
+        }
+      }
       --indent_;
     }
 
-    void visit(const sequence_element_cref&  ref, int index)
+    void visit(const sequence_cref&  ref, int)
     {
-      os_ << indent_ <<  "[" << index << "]:\n";
+      size_t index = 0;
       ++indent_;
-      ref.accept_accessor(*this);
+      for (auto element : ref) {
+        os_ << indent_ << "[" << index++ << "]" << ":\n";
+        // we cannot use apply_accessor(*this, field) here, because that would only visit the
+        // sub-fields of the elment instead of calling visit(const aggregate_cref& ref, int)
+        this->visit(element, 0);
+        os_ << "\n";
+      }
       --indent_;
     }
 };
-#endif /* end of include guard: MESSAGE_PRINTER_H_U3Q5YMCD */
+

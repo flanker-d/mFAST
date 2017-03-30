@@ -16,12 +16,12 @@
 //     You should have received a copy of the GNU Lesser General Public License
 //     along with mFast.  If not, see <http://www.gnu.org/licenses/>.
 //
+#include "catch.hpp"
+
 #include <mfast.h>
 #include <mfast/xml_parser/dynamic_templates_description.h>
-#include <mfast/coder/common/dictionary_builder.h>
-#define BOOST_TEST_DYN_LINK
-#include <boost/test/test_tools.hpp>
-#include <boost/test/unit_test.hpp>
+#include <mfast/coder/common/template_repo.h>
+#include <mfast/field_instructions.h>
 #include <cstring>
 #include <stdexcept>
 
@@ -30,7 +30,7 @@
 
 using namespace mfast;
 namespace {
-boost::test_tools::predicate_result
+bool
 same_dict(const field_instruction* lhs, const field_instruction* rhs)
 {
   const ascii_field_instruction* lhs_inst = static_cast<const ascii_field_instruction*>(lhs);
@@ -38,10 +38,10 @@ same_dict(const field_instruction* lhs, const field_instruction* rhs)
 
   if (&lhs_inst->prev_value() == &rhs_inst->prev_value())
     return true;
-  return boost::test_tools::predicate_result(false);
+  return false;
 }
 
-boost::test_tools::predicate_result
+bool
 different_dict(const field_instruction* lhs, const field_instruction* rhs)
 {
   const ascii_field_instruction* lhs_inst = static_cast<const ascii_field_instruction*>(lhs);
@@ -49,24 +49,24 @@ different_dict(const field_instruction* lhs, const field_instruction* rhs)
 
   if (&lhs_inst->prev_value() != &rhs_inst->prev_value())
     return true;
-  return boost::test_tools::predicate_result(false);
+  return false;
 }
 
 
-template_id_map_t templates_map;
+mfast::simple_template_repo_t repo;
 
 
 const field_instruction* instruction_of(int template_id, const char* fieldname)
 {
-  int field_index = templates_map[template_id]->find_subinstruction_index_by_name(fieldname);
-  return templates_map[template_id]->subinstruction(field_index);
+  template_instruction* inst =  repo.get_template(template_id);
+  int field_index = inst->find_subinstruction_index_by_name(fieldname);
+  return inst->subinstruction(field_index);
 }
 }
 
-BOOST_AUTO_TEST_SUITE( test_dictionary_builder )
 
 
-BOOST_AUTO_TEST_CASE(typeRef_test)
+TEST_CASE("test the construction of fast dictionary", "[typeRef_test]")
 {
   const char* xml_content =
    "<?xml version=\" 1.0 \"?>\n"
@@ -124,34 +124,29 @@ BOOST_AUTO_TEST_CASE(typeRef_test)
    "</template>"
    "</templates>\n";
 
-  dictionary_resetter resetter;
-  arena_allocator alloc;
-
-  dictionary_builder builder(resetter,templates_map,&alloc);
 
   dynamic_templates_description description(xml_content);
-  builder.build(&description);
+  repo.build(&description ,&description+1);
 
-  BOOST_CHECK(same_dict(instruction_of(1, "Field1"), instruction_of(6, "Field1"))); // implicit vs explicit global
-  BOOST_CHECK(different_dict(instruction_of(1, "Field1"), instruction_of(1, "Field2"))); // different key
-  BOOST_CHECK(different_dict(instruction_of(2, "Field2"), instruction_of(2, "Field3"))); // different key
-
-
-  BOOST_CHECK(same_dict(instruction_of(1, "Field3"), instruction_of(5, "Field3"))); // type
-  BOOST_CHECK(same_dict(instruction_of(2, "Field3"), instruction_of(3, "Field3"))); // global
-  BOOST_CHECK(different_dict(instruction_of(1, "Field3"), instruction_of(3, "Field3"))); // type vs global
-  BOOST_CHECK(different_dict(instruction_of(1, "Field3"), instruction_of(6, "Field3"))); // different types
+  REQUIRE(same_dict(instruction_of(1, "Field1"), instruction_of(6, "Field1"))); // implicit vs explicit global
+  REQUIRE(different_dict(instruction_of(1, "Field1"), instruction_of(1, "Field2"))); // different key
+  REQUIRE(different_dict(instruction_of(2, "Field2"), instruction_of(2, "Field3"))); // different key
 
 
-  BOOST_CHECK(same_dict(instruction_of(2, "Field4"), instruction_of(5, "Field4"))); // type
-  BOOST_CHECK(same_dict(instruction_of(3, "Field4"), instruction_of(4, "Field4"))); // global
-  BOOST_CHECK(different_dict(instruction_of(2, "Field4"), instruction_of(4, "Field4"))); // type vs global
-  BOOST_CHECK(different_dict(instruction_of(1, "Field4"), instruction_of(4, "Field4"))); // template vs global
-  BOOST_CHECK(different_dict(instruction_of(1, "Field4"), instruction_of(2, "Field4"))); // template vs type
+  REQUIRE(same_dict(instruction_of(1, "Field3"), instruction_of(5, "Field3"))); // type
+  REQUIRE(same_dict(instruction_of(2, "Field3"), instruction_of(3, "Field3"))); // global
+  REQUIRE(different_dict(instruction_of(1, "Field3"), instruction_of(3, "Field3"))); // type vs global
+  REQUIRE(different_dict(instruction_of(1, "Field3"), instruction_of(6, "Field3"))); // different types
 
-  BOOST_CHECK(different_dict(instruction_of(1, "Field5"), instruction_of(2, "Field5"))); // different templates
-  BOOST_CHECK(same_dict(instruction_of(1, "Field4"), instruction_of(1, "Field8"))); // same key
+
+  REQUIRE(same_dict(instruction_of(2, "Field4"), instruction_of(5, "Field4"))); // type
+  REQUIRE(same_dict(instruction_of(3, "Field4"), instruction_of(4, "Field4"))); // global
+  REQUIRE(different_dict(instruction_of(2, "Field4"), instruction_of(4, "Field4"))); // type vs global
+  REQUIRE(different_dict(instruction_of(1, "Field4"), instruction_of(4, "Field4"))); // template vs global
+  REQUIRE(different_dict(instruction_of(1, "Field4"), instruction_of(2, "Field4"))); // template vs type
+
+  REQUIRE(different_dict(instruction_of(1, "Field5"), instruction_of(2, "Field5"))); // different templates
+  REQUIRE(same_dict(instruction_of(1, "Field4"), instruction_of(1, "Field8"))); // same key
 
 }
 
-BOOST_AUTO_TEST_SUITE_END()

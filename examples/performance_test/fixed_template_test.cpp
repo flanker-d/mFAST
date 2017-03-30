@@ -27,26 +27,29 @@
 #include "example.h"
 
 #include <boost/exception/diagnostic_information.hpp>
-// #include <boost/chrono/chrono.hpp>
+#include <chrono>
 
 // Although chrono is better for performance measurement in theory, I choose to sue
 // boost data_time because QuickFAST uses it and I want to compare the result with
 // QuickFAST PerformanceTest directly.
 
-#include <boost/date_time/microsec_time_clock.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
+// #include <boost/date_time/microsec_time_clock.hpp>
+// #include <boost/date_time/posix_time/posix_time.hpp>
+
+#if defined(_MSC_VER)
+#pragma warning(disable:4996)
+#endif
 
 const char usage[] =
-  "  -f file     : FAST Message file (required)\n"
+  "  -f file     : FAST Message file, default file=" DATA_FILE "\n"
   "  -head n     : process only the first 'n' messages\n"
   "  -c count    : repeat the test 'count' times\n"
   "  -r          : Toggle 'reset encoder on every message' (default false).\n"
-  "  -hfix n     : Skip n byte header before each message\n"
-  "  -arena      : Use arena_allocator\n\n";
+  "  -hfix n     : Skip n byte header before each message, (default n=4)\n\n";
 
 int read_file(const char* filename, std::vector<char>& contents)
 {
-  std::FILE*fp = std::fopen(filename, "rb");
+  std::FILE* fp = std::fopen(filename, "rb");
   if (fp)
   {
     std::fseek(fp, 0, SEEK_END);
@@ -66,8 +69,8 @@ int main(int argc, const char** argv)
   std::size_t head_n = (std::numeric_limits<std::size_t>::max)();
   std::size_t repeat_count = 1;
   bool force_reset = false;
-  std::size_t skip_header_bytes = 0;
-  bool use_arena = false;
+  std::size_t skip_header_bytes = 4;;
+  const char* filename = DATA_FILE;
 
   int i = 1;
   int parse_status = 0;
@@ -75,7 +78,7 @@ int main(int argc, const char** argv)
     const char* arg = argv[i++];
 
     if (std::strcmp(arg, "-f") == 0) {
-      parse_status = read_file(argv[i++], message_contents);
+      filename = argv[i++];
     }
     else if (std::strcmp(arg, "-head") == 0) {
       head_n = atoi(argv[i++]);
@@ -97,10 +100,9 @@ int main(int argc, const char** argv)
     else if (std::strcmp(arg, "-hfix") == 0) {
       skip_header_bytes = atoi(argv[i++]);
     }
-    else if (std::strcmp(arg, "-arena") == 0) {
-      use_arena = true;
-    }
   }
+
+  parse_status = read_file(filename, message_contents);
 
   if (parse_status != 0 || message_contents.size() == 0) {
     std::cout << '\n' << usage;
@@ -109,11 +111,8 @@ int main(int argc, const char** argv)
 
   try {
 
-    mfast::arena_allocator arena_alloc;
     mfast::malloc_allocator malloc_allc;
     mfast::allocator* alloc = &malloc_allc;
-    if (use_arena)
-      alloc = &arena_alloc;
 
     const mfast::templates_description* descriptions[] = { example::description() };
 
@@ -124,30 +123,33 @@ int main(int argc, const char** argv)
     mfast::fast_encoder encoder(alloc);
     encoder.include(descriptions);
     std::vector<char> buffer;
-    buffer.reserve(message_contents.size());
+    buffer.resize(message_contents.size());
 #endif
 
     mfast::message_type msg_value;
 
-    boost::posix_time::ptime start = boost::posix_time::microsec_clock::universal_time();
+    // boost::posix_time::ptime start = boost::posix_time::microsec_clock::universal_time();
 
-    // typedef boost::chrono::high_resolution_clock clock;
-    // clock::time_point start=clock::now();
+    typedef std::chrono::high_resolution_clock clock;
+    clock::time_point start=clock::now();
     {
 
       for (std::size_t j = 0; j < repeat_count; ++j) {
-
-        const char *first = &message_contents[0] + skip_header_bytes;
-        const char *last = &message_contents[0] + message_contents.size();
+#ifdef WITH_ENCODE
+        char* buf_beg = &buffer[0];
+        char* buf_end = buf_beg + buffer.size();
+#endif
+        const char* first = &message_contents[0] + skip_header_bytes;
+        const char* last = &message_contents[0] + message_contents.size();
         bool first_message = true;
         while (first < last ) {
-          mfast::message_cref msg = decoder.decode(first, last, force_reset || first_message );
+#ifdef WITH_ENCODE
+          mfast::message_cref msg =
+#endif
+          decoder.decode(first, last, force_reset || first_message );
 
 #ifdef WITH_ENCODE
-          encoder.encode(msg, buffer, force_reset || first_message);
-#endif
-#ifdef WITH_MESSAGE_COPY
-          msg_value = mfast::message_type(msg, &malloc_allc);
+          buf_beg += encoder.encode(msg, buf_beg, buf_end-buf_beg, force_reset || first_message);
 #endif
           first_message = false;
           first += skip_header_bytes;
@@ -155,11 +157,11 @@ int main(int argc, const char** argv)
       }
     }
 
-    boost::posix_time::ptime stop = boost::posix_time::microsec_clock::universal_time();
-    std::cout << "time spent " <<  static_cast<unsigned long>((stop - start).total_milliseconds()) << " msec\n";
+    // boost::posix_time::ptime stop = boost::posix_time::microsec_clock::universal_time();
+    // std::cout << "time spent " <<  static_cast<unsigned long>((stop - start).total_milliseconds()) << " msec\n";
 
-    // typedef boost::chrono::milliseconds ms;
-    // std::cout << "time spent " << boost::chrono::duration_cast<ms>(clock::now() - start).count() << " ms\n";
+    typedef std::chrono::milliseconds ms;
+    std::cout << "time spent " << std::chrono::duration_cast<ms>(clock::now() - start).count() << " ms\n";
   }
   catch (boost::exception& e) {
     std::cerr << boost::diagnostic_information(e);

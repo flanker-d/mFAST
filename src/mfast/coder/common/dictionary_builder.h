@@ -1,174 +1,154 @@
-// Copyright (c) 2013, 2014, Huang-Ming Huang,  Object Computing, Inc.
+// Copyright (c) 2016, Huang-Ming Huang,  Object Computing, Inc.
 // All rights reserved.
 //
 // This file is part of mFAST.
-//
-//     mFAST is free software: you can redistribute it and/or modify
-//     it under the terms of the GNU Lesser General Public License as published by
-//     the Free Software Foundation, either version 3 of the License, or
-//     (at your option) any later version.
-//
-//     mFAST is distributed in the hope that it will be useful,
-//     but WITHOUT ANY WARRANTY; without even the implied warranty of
-//     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-//     GNU General Public License for more details.
-//
-//     You should have received a copy of the GNU Lesser General Public License
-//     along with mFast.  If not, see <http://www.gnu.org/licenses/>.
-//
-#ifndef DICTIONARY_BUILDER_H_F26FXFII
-#define DICTIONARY_BUILDER_H_F26FXFII
+// See the file license.txt for licensing information.
+#pragma once
 
-#include "mfast/field_instructions.h"
-#include "mfast/arena_allocator.h"
-#include "mfast/coder/mfast_coder_export.h"
+#include <tuple>
+#include "../mfast_coder_export.h"
+#include "../../field_instructions.h"
+#include "../../arena_allocator.h"
 #include <vector>
 #include <map>
 #include <string>
 #include <stdexcept>
 
 #ifdef _MSC_VER
-#pragma warning(disable: 4251) // non dll-interface class used as a member for dll-interface class
-#endif //_MSC_VER
-
+#pragma warning(disable : 4251) // non dll-interface class used as a member for
+                                // dll-interface class
+#endif                          //_MSC_VER
 
 namespace mfast {
+template <typename... Args> inline void pass(Args &&...) {}
 
-// field value is use to store the previous values inside dictionaries.
+template <class T, T... Ints> struct integer_sequence {};
 
+template <class S> struct next_integer_sequence;
 
-  class dictionary_resetter
-  {
-  public:
+template <class T, T... Ints>
+struct next_integer_sequence<integer_sequence<T, Ints...>> {
+  using type = integer_sequence<T, Ints..., sizeof...(Ints)>;
+};
 
-    void push_back(value_storage* entry)
-    {
-      impl_.push_back(entry);
-    }
+template <class T, T I, T N> struct make_int_seq_impl;
 
-    void reset()
-    {
-      for (std::size_t i = 0; i < impl_.size(); ++i) {
-        impl_[i]->defined(false);
+template <class T, T N>
+using make_integer_sequence = typename make_int_seq_impl<T, 0, N>::type;
+
+template <class T, T I, T N> struct make_int_seq_impl {
+  using type = typename next_integer_sequence<
+      typename make_int_seq_impl<T, I + 1, N>::type>::type;
+};
+
+template <class T, T N> struct make_int_seq_impl<T, N, N> {
+  using type = integer_sequence<T>;
+};
+
+template <std::size_t... Ints>
+using index_sequence = integer_sequence<std::size_t, Ints...>;
+
+template <std::size_t N>
+using make_index_sequence = make_integer_sequence<std::size_t, N>;
+
+class template_repo_base;
+class MFAST_CODER_EXPORT dictionary_builder
+    : private field_instruction_visitor {
+public:
+  dictionary_builder(template_repo_base &repo_base);
+
+  template <typename Operation>
+  void build(const Operation &op, const templates_description *def) {
+    current_ns_ = def->template_ns();
+    current_dictionary_ =
+        (def->dictionary()[0] == 0) ? "global" : def->dictionary();
+    for (auto &elem : *def) {
+      if (elem->id() > 0) {
+        op(this->clone_instruction(elem));
       }
     }
+  }
 
-    std::size_t size() const
-    {
-      return impl_.size();
-    }
+  template <typename Operation, typename... T>
+  void build_from_descriptions(const Operation &op, T... descs) {
+    pass(build(op, descs)...);
+  }
 
-  private:
-    std::vector<value_storage*> impl_;
+private:
+  template <typename Operation, typename Description>
+  int build(const Operation &op, const Description *desc) {
+    this->current_ns_ = desc->template_ns();
+    this->current_dictionary_ =
+        (desc->dictionary()[0] == 0) ? "global" : desc->dictionary();
+
+    // using MessagePointers = mp_transform<typename Description::types,
+    // std::add_pointer_t>;
+    using Messages = typename Description::types;
+    this->build_message_infos<Messages>(
+        op, make_index_sequence<std::tuple_size<Messages>::value>{});
+    return 0;
+  }
+
+  template <typename Tuple, typename Operation, std::size_t... I>
+  void build_message_infos(const Operation &op, const index_sequence<I...> &) {
+    pass(this->build_message_info<typename std::tuple_element<I, Tuple>::type>(
+        op)...);
+  }
+
+  template <typename Message, typename Operation>
+  int build_message_info(const Operation &op) {
+    op(this->clone_instruction(Message::instruction()),
+       static_cast<Message *>(nullptr));
+    return 0;
+  }
+
+  virtual void visit(const int32_field_instruction *, void *) override;
+  virtual void visit(const uint32_field_instruction *, void *) override;
+  virtual void visit(const int64_field_instruction *, void *) override;
+  virtual void visit(const uint64_field_instruction *, void *) override;
+  virtual void visit(const decimal_field_instruction *, void *) override;
+  virtual void visit(const ascii_field_instruction *, void *) override;
+  virtual void visit(const unicode_field_instruction *, void *) override;
+  virtual void visit(const byte_vector_field_instruction *, void *) override;
+  virtual void visit(const int32_vector_field_instruction *, void *) override;
+  virtual void visit(const uint32_vector_field_instruction *, void *) override;
+  virtual void visit(const int64_vector_field_instruction *, void *) override;
+  virtual void visit(const uint64_vector_field_instruction *, void *) override;
+  virtual void visit(const group_field_instruction *, void *) override;
+  virtual void visit(const sequence_field_instruction *, void *) override;
+  virtual void visit(const template_instruction *, void *) override;
+  virtual void visit(const templateref_instruction *, void *) override;
+
+  virtual void visit(const enum_field_instruction *, void *) override;
+
+  template_instruction *clone_instruction(const template_instruction *);
+
+  void build_group(const field_instruction *fi,
+                   const group_field_instruction *src,
+                   group_field_instruction *dest);
+
+  value_storage *get_dictionary_storage(const char *key, const char *ns,
+                                        const op_context_t *op_context,
+                                        field_type_enum_t field_type,
+                                        value_storage *candidate_storage,
+                                        field_instruction *instruction);
+
+  template_instruction *find_template(uint32_t template_id);
+
+  struct indexer_value_type {
+    field_type_enum_t field_type_;
+    field_instruction *instruction_;
+    value_storage *storage_;
   };
 
+  typedef std::map<std::string, indexer_value_type> indexer_t;
+  indexer_t indexer_;
+  std::string current_template_;
+  std::string current_type_;
+  const char *current_ns_;
+  const char *current_dictionary_;
 
-  class dictionary_value_destroyer
-  {
-  public:
-    dictionary_value_destroyer(allocator* alloc)
-      : alloc_(alloc)
-    {
-    }
-
-    ~dictionary_value_destroyer()
-    {
-      for (std::size_t i = 0; i < impl_.size(); ++i) {
-        if (impl_[i]->of_array.capacity_in_bytes_)
-          alloc_->deallocate(impl_[i]->of_array.content_,
-                             impl_[i]->of_array.capacity_in_bytes_);
-      }
-    }
-
-    void push_back(value_storage* entry)
-    {
-      impl_.push_back(entry);
-    }
-
-    std::size_t size() const
-    {
-      return impl_.size();
-    }
-
-  private:
-    allocator* alloc_;
-    std::vector<value_storage*> impl_;
-  };
-
-
-  typedef std::map<uint32_t, template_instruction*> template_id_map_t;
-
-
-  class MFAST_CODER_EXPORT dictionary_builder
-    : private field_instruction_visitor
-  {
-  public:
-
-    dictionary_builder(dictionary_resetter&        resetter,
-                       template_id_map_t&          templates_map,
-                       arena_allocator*            allocator,
-                       dictionary_value_destroyer* value_destroyer=0);
-
-    void build(const templates_description* def);
-
-  private:
-
-    virtual void visit(const int32_field_instruction*, void*);
-    virtual void visit(const uint32_field_instruction*, void*);
-    virtual void visit(const int64_field_instruction*, void*);
-    virtual void visit(const uint64_field_instruction*, void*);
-    virtual void visit(const decimal_field_instruction*, void*);
-    virtual void visit(const ascii_field_instruction*, void*);
-    virtual void visit(const unicode_field_instruction*, void*);
-    virtual void visit(const byte_vector_field_instruction*, void*);
-    virtual void visit(const int32_vector_field_instruction*, void*);
-    virtual void visit(const uint32_vector_field_instruction*, void*);
-    virtual void visit(const int64_vector_field_instruction*, void*);
-    virtual void visit(const uint64_vector_field_instruction*, void*);
-    virtual void visit(const group_field_instruction*, void*);
-    virtual void visit(const sequence_field_instruction*, void*);
-    virtual void visit(const template_instruction*, void*);
-    virtual void visit(const templateref_instruction*, void*);
-
-    virtual void visit(const enum_field_instruction*, void*);
-
-    void build_template(const template_instruction*, void*);
-
-    void build_group(const field_instruction*       fi,
-                     const group_field_instruction* src,
-                     group_field_instruction*       dest);
-
-    value_storage*
-    get_dictionary_storage(const char*         key,
-                           const char*         ns,
-                           const op_context_t* op_context,
-                           field_type_enum_t   field_type,
-                           value_storage*      candidate_storage);
-
-    template_instruction* find_template(uint32_t template_id);
-
-    struct indexer_value_type
-    {
-      field_type_enum_t field_type_;
-      value_storage*  storage_;
-    };
-
-    dictionary_resetter& resetter_;
-    typedef std::map<std::string, indexer_value_type>  indexer_t;
-    indexer_t indexer_;
-    arena_allocator* alloc_;
-    std::string current_template_;
-    std::string current_type_;
-    const char* current_ns_;
-    const char* current_dictionary_;
-    template_id_map_t& template_id_map_;
-    typedef std::map<std::string, template_instruction*> template_name_map_t;
-    template_name_map_t template_name_map_;
-    dictionary_value_destroyer* value_destroyer_;
-  };
-
-
+  template_repo_base &repo_base_;
+  arena_allocator &alloc_;
+};
 }
-
-
-#endif /* end of include guard: DICTIONARY_BUILDER_H_F26FXFII */
